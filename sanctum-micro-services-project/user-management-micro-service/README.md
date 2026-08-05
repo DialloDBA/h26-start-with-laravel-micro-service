@@ -1,58 +1,114 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+## User management service
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+### Routes disponibles
 
-## About Laravel
+Toutes les routes ci-dessous sont préfixées par `/api` (défini dans `bootstrap/app.php`).
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+#### Publiques
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| Méthode | URI         | Contrôleur                | Description                                                  |
+| ------- | ----------- | ------------------------- | ------------------------------------------------------------ |
+| GET     | `/`         | —                         | Ping du service (`User Management Micro Service is running`) |
+| POST    | `/register` | `AuthController@register` | Crée un utilisateur et retourne un token Bearer              |
+| POST    | `/login`    | `AuthController@login`    | Authentifie un utilisateur et retourne un token Bearer       |
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+**`POST /register`** — body attendu :
 
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```json
+{
+    "name": "string",
+    "email": "string (unique)",
+    "username": "string (unique)",
+    "password": "string (min 8, confirmed)",
+    "password_confirmation": "string"
+}
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Réponse `201` : `{ message, user, token, token_type: "Bearer" }`
 
-## Contributing
+**`POST /login`** — body attendu :
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```json
+{
+    "email": "string",
+    "password": "string"
+}
+```
 
-## Code of Conduct
+Réponse `200` : `{ message, user, token, token_type: "Bearer" }`. `401` si identifiants invalides.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+#### Protégées par `auth:sanctum` (token Bearer requis)
 
-## Security Vulnerabilities
+| Méthode | URI       | Contrôleur              | Description                                          |
+| ------- | --------- | ----------------------- | ---------------------------------------------------- |
+| POST    | `/logout` | `AuthController@logout` | Révoque le token courant                             |
+| GET     | `/me`     | `AuthController@me`     | Retourne l'utilisateur authentifié (sans `is_admin`) |
+| GET     | `/user`   | closure                 | Retourne l'utilisateur authentifié (brut)            |
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Header requis : `Authorization: Bearer <token>`
 
-## License
+#### Protégées par `auth:sanctum` + `is_admin`
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+| Méthode | URI      | Contrôleur             | Description                 |
+| ------- | -------- | ---------------------- | --------------------------- |
+| GET     | `/users` | `UserController@index` | Liste tous les utilisateurs |
+
+Nécessite un utilisateur authentifié avec `is_admin = true`, sinon `403 Unauthorized`.
+
+#### Route interne (service-à-service)
+
+| Méthode | URI                | Contrôleur                  | Description                                          |
+| ------- | ------------------ | --------------------------- | ---------------------------------------------------- |
+| POST    | `/auth/introspect` | `AuthController@introspect` | Vérifie la validité d'un token et retourne ses infos |
+
+Protégée par le middleware `internal.api.auth` : nécessite le header `X-Internal-API-Key` égal à la valeur de `INTERNAL_API_KEY` (config `app.internal_api_key`). Destinée aux autres microservices (order-management, payment-management) pour valider un token émis par ce service, pas aux clients finaux.
+
+Body attendu :
+
+```json
+{}
+```
+
+Le token est lu depuis le header `Authorization: Bearer <token>` (pas depuis le body).
+
+Réponse `200` :
+
+```json
+{
+    "valid": true,
+    "token": "string",
+    "abilities": ["..."],
+    "expires_at": "datetime|null",
+    "user": {}
+}
+```
+
+`401` si token absent, invalide ou expiré.
+
+### Autres routes (framework, non applicatives)
+
+| Méthode  | URI                   | Statut     | Description                                   |
+| -------- | --------------------- | ---------- | --------------------------------------------- |
+| GET/HEAD | `sanctum/csrf-cookie` | Désactivée | Émission du cookie CSRF                       |
+| GET/HEAD | `storage/{path}`      | Désactivée | Sert les fichiers du disque `local`           |
+| PUT      | `storage/{path}`      | Désactivée | Upload sur le disque `local`                  |
+| GET/HEAD | `up`                  | Active     | Health check (utilisé par les orchestrateurs) |
+
+Ces routes sont enregistrées automatiquement par des service providers du framework (Sanctum, Filesystem), pas par `routes/api.php`. Elles ne servent à rien dans ce service (auth 100% Bearer, pas d'upload de fichiers exposé), donc elles ont été coupées à la source plutôt que filtrées après coup :
+
+- **`sanctum/csrf-cookie`** — n'a de sens que pour l'auth par cookie de session (SPA sur le même domaine). Ce service n'utilisant que des tokens Bearer (`stateful` vide dans `config/sanctum.php`), la route est inutile. Désactivée via `config/sanctum.php` :
+
+    ```php
+    'routes' => false,
+    ```
+
+- **`storage/{path}` (GET et PUT)** — servent/uploadent les fichiers du disque `local` directement via une route HTTP. Ce service ne stocke ni ne sert aucun fichier, la route est donc coupée via `config/filesystems.php`, disque `local` :
+
+    ```php
+    'local' => [
+        ...
+        'serve' => false,
+    ],
+    ```
+
+- **`up`** — laissée active volontairement : c'est le health check utilisé par l'orchestrateur (Docker/Kubernetes/load balancer) pour savoir si le service est vivant. La désactiver casserait la supervision. Configurable dans `bootstrap/app.php` via `health: '/up'`.
