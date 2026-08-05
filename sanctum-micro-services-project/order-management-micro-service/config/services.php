@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    "auth_service" => [
+        "base_url" => env("AUTH_SERVICE_BASE_URL", "http://127.0.0.1:2000"),
+        "internal_api_key" => env("AUTH_SERVICE_INTERNAL_API_KEY", "default_internal_api_key"),
+    ],
 ];

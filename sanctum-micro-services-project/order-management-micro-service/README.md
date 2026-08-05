@@ -1,58 +1,105 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+## Order management service
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Microservice Laravel gérant les commandes (`orders`). Ne gère pas ses propres utilisateurs : l'authentification est déléguée à `user-management-micro-service` via un appel interne (introspection de token).
 
-## About Laravel
+### Configuration
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Variables d'environnement spécifiques à ce service (`.env`) :
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| Variable                       | Défaut                       | Description                                                              |
+| ------------------------------- | ----------------------------- | -------------------------------------------------------------------------- |
+| `AUTH_SERVICE_BASE_URL`         | `http://127.0.0.1:2000`       | URL de base de `user-management-micro-service`                            |
+| `AUTH_SERVICE_INTERNAL_API_KEY` | `default_internal_api_key`    | Clé envoyée en `X-Internal-Api-Key` lors de l'appel d'introspection       |
+| `CACHE_STORE`                   | `database`                    | Utilisé pour cacher les tokens validés et les listes de commandes par utilisateur |
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Cette clé doit être identique à `INTERNAL_API_KEY` configurée dans `user-management-micro-service` (voir son README).
 
-## Learning Laravel
+### Authentification inter-services
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+Ce service ne valide pas les tokens Bearer lui-même : le middleware `interservice.auth` (`App\Http\Middleware\AuthenticateMicroservice`) délègue la vérification à `user-management-micro-service` via `App\Services\AuthServiceClient`, qui appelle `POST {AUTH_SERVICE_BASE_URL}/api/auth/introspect`.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- Le résultat de l'introspection est mis en cache par token (`auth_service_token_<hash>`) pour `services.auth_service.cache_duration` (5 minutes par défaut), pour éviter un appel HTTP à chaque requête.
+- Si le token est invalide/expiré/absent → `401 Unauthorized`.
+- Si valide, l'utilisateur introspecté est injecté dans la requête via `$request->attributes->get('user')`, consommé ensuite par `OrderController`.
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+### Routes disponibles
 
-## Agentic Development
+Toutes les routes ci-dessous sont préfixées par `/api` (défini dans `bootstrap/app.php`).
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+#### Publiques
 
-```bash
-composer require laravel/boost --dev
+| Méthode | URI | Description                          |
+| ------- | --- | -------------------------------------- |
+| GET     | `/` | Ping du service (middleware `web`)     |
 
-php artisan boost:install
+#### Protégée par `auth:sanctum`
+
+| Méthode | URI     | Description                                |
+| ------- | ------- | --------------------------------------------- |
+| GET     | `/user` | Retourne l'utilisateur Sanctum local (debug)  |
+
+> Cette route utilise le guard Sanctum local du service, distinct du flux d'authentification inter-services ci-dessus. Ce service n'ayant pas ses propres utilisateurs/tokens Sanctum en pratique, elle sert surtout de route de diagnostic.
+
+#### Protégées par `interservice.auth` (token Bearer validé via `user-management-service`)
+
+| Méthode | URI             | Contrôleur              | Description                                |
+| ------- | --------------- | ------------------------ | --------------------------------------------- |
+| GET     | `/orders`       | `OrderController@index`  | Liste les commandes de l'utilisateur courant  |
+| POST    | `/orders/create` | `OrderController@store` | Crée une commande pour l'utilisateur courant  |
+| GET     | `/orders/{id}`  | `OrderController@show`  | Détail d'une commande par id                  |
+
+Header requis : `Authorization: Bearer <token>` (token émis par `user-management-micro-service`).
+
+**`GET /orders`**
+
+Liste mise en cache 60s par utilisateur (clé `user_orders_<user_id>`), invalidée automatiquement à la création d'une commande (`store`). Réponse :
+```json
+{
+  "message": "Orders retrieved successfully",
+  "data_count": 138,
+  "data": [
+    {
+      "id": 1,
+      "user_id": 11,
+      "order_number": "ORD-...",
+      "grand_total": "CA$858.39",
+      "currency": "CAD",
+      "shipping_address": "string",
+      "billing_address": "string",
+      "payment_method": "Credit Card",
+      "created_at": "2026-08-05T06:47:00+00:00",
+      "updated_at": "2026-08-05T06:49:35+00:00"
+    }
+  ]
+}
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+**`POST /orders/create`** — body attendu (`user_id` est déduit automatiquement de l'utilisateur authentifié, pas besoin de l'envoyer) :
+```json
+{
+  "total_amount": "numeric",
+  "tax_amount": "numeric",
+  "shipping_amount": "numeric",
+  "discount_amount": "numeric (optionnel)",
+  "currency": "string (3 caractères)",
+  "shipping_address": "string",
+  "billing_address": "string",
+  "payment_method": "credit_card | debit_card | paypal"
+}
+```
+Réponse `201` : `{ message, data: <Order> }`. `grand_total` est calculé côté serveur (`total + tax + shipping - discount`), toute valeur envoyée est ignorée.
 
-## Contributing
+**`GET /orders/{id}`** — Réponse `200` : `{ message, data: <Order> }`. `404` si la commande n'existe pas.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+> ⚠️ `show()` ne filtre pas par utilisateur courant : n'importe quel appelant authentifié peut consulter n'importe quelle commande par id (IDOR potentiel).
 
-## Code of Conduct
+### Enums
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+- **`App\Enums\PaymentMethod`** (backed `string`) : `CREDIT_CARD = 'credit_card'`, `DEBIT_CARD = 'debit_card'`, `PAYPAL = 'paypal'` — aligné sur la colonne SQL `orders.payment_method`.
+- **`App\Enums\OrderStatus`** (backed `string`) : `PENDING = 'pending'`, `PROCESSING = 'processing'`, `COMPLETED = 'completed'`, `CANCELLED = 'cancelled'` — aligné sur la colonne SQL `orders.status`.
 
-## Security Vulnerabilities
+### Autres routes (framework, non applicatives)
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+| Méthode  | URI  | Description                                    |
+| -------- | ---- | ------------------------------------------------- |
+| GET/HEAD | `up` | Health check (utilisé par les orchestrateurs)      |
