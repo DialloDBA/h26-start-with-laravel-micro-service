@@ -18,9 +18,9 @@ class AuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $user = User::where('email', $request->email)->firstOrFail();
+        $user = User::where('email', $request->email)->first();
 
-        if (!Hash::check($request->password, $user->password)) {
+        if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
@@ -66,35 +66,52 @@ class AuthController extends Controller
      */
     public function logout(Request $request)
     {
-        //
+        if (!$request->user() || !$request->user()->currentAccessToken()) {
+            return response()->json(['message' => 'No active token found'], 400);
+        }
+        $request->user()->currentAccessToken()->delete();
+        return response()->json(['message' => 'Deconnexion réussie'], 200);
     }
 
     /**
      * Display the specified resource.
      */
-    public function me(Request $request) {}
+    public function me(Request $request)
+    {
+        $user = $request->user();
+        $user->sethidden(['is_admin']);
+        return response()->json(['user' => $user], 200);
+    }
 
     /**
      * Show the form for editing the specified resource.
      */
     public function introspect(Request $request)
     {
-        //
-    }
+        $token = $request->bearerToken();
+        if (!$token) {
+            return response()->json(['message' => 'No token provided'], 401);
+        }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
+        if (!$accessToken) {
+            return response()->json(['message' => 'Invalid token'], 401);
+        }
+
+        if ($accessToken->expires_at && $accessToken->expires_at->isPast()) {
+            return response()->json(['message' => 'Token has expired'], 401);
+        }
+
+        $user = $accessToken->tokenable;
+
+
+        return response()->json([
+            "valid" => true,
+            "token" => $accessToken->token,
+            "abilities" => $accessToken->abilities,
+            "expires_at" => $accessToken->expires_at,
+            'user' => $user,
+        ], 200);
     }
 }

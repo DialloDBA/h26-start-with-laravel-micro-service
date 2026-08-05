@@ -1,18 +1,18 @@
 <?php
 
+use App\Http\Controllers\AuthController;
 use App\Http\Controllers\UserController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 //Authentication routes
 
-Route::controller(\App\Http\Controllers\AuthController::class)->group(function () {
+Route::controller(AuthController::class)->group(function () {
     Route::post('/register', "register");
     Route::post('/login', "login");
     Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/logout', 'logout');
         Route::get('/me', 'me');
-        Route::get('/introspect', 'introspect');
     });
 });
 
@@ -21,6 +21,8 @@ Route::get('/', function () {
         'message' => 'User Management Micro Service is running',
     ]);
 });
+
+Route::post('/auth/introspect', [AuthController::class, 'introspect'])->middleware('internal.api.auth');
 
 Route::middleware(['auth:sanctum'])->group(function () {
 

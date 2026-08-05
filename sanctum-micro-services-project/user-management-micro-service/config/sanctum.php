@@ -32,7 +32,7 @@ return [
     |
     */
 
-    'guard' => ['sanctum'],
+    'guard' => ['web'],
 
     /*
     |--------------------------------------------------------------------------
@@ -60,7 +60,7 @@ return [
     |
     */
 
-    'token_prefix' => env('SANCTUM_TOKEN_PREFIX', ''),
+    'token_prefix' => env('SANCTUM_TOKEN_PREFIX', 'mx26'),
 
     /*
     |--------------------------------------------------------------------------
@@ -79,4 +79,5 @@ return [
         'validate_csrf_token' => ValidateCsrfToken::class,
     ],
 
+    "routes" => false,
 ];

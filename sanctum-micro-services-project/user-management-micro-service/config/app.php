@@ -14,6 +14,7 @@ return [
     */
 
     'name' => env('APP_NAME', 'Laravel'),
+    'internal_api_key' => env('INTERNAL_API_KEY', 'default_internal_api_key'),
 
     /*
     |--------------------------------------------------------------------------
