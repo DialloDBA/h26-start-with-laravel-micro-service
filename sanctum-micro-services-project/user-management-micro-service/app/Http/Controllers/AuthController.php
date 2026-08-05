@@ -11,9 +11,27 @@ class AuthController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function login()
+    public function login(Request $request)
     {
-        //
+        $request->validate([
+            'email' => 'required|string|email',
+            'password' => 'required|string',
+        ]);
+
+        $user = User::where('email', $request->email)->firstOrFail();
+
+        if (!Hash::check($request->password, $user->password)) {
+            return response()->json(['message' => 'Invalid credentials'], 401);
+        }
+
+        $token = $user->createToken("{$user->username}-token")->plainTextToken;
+
+        return response()->json([
+            'message' => 'Login successful',
+            'user' => $user,
+            'token' => $token,
+            'token_type' => "Bearer",
+        ]);
     }
 
     /**
