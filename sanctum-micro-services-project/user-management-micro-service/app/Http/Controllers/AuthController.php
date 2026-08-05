@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
@@ -25,6 +27,20 @@ class AuthController extends Controller
             'username' => 'required|string|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
         ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'username' => $request->username,
+            'password' => Hash::make($request->password),
+        ]);
+        $token = $user->createToken("{$user->username}-token")->plainTextToken;
+        return response()->json([
+            'message' => 'Utilisateur Crée avec succès',
+            'user' => $user,
+            'token' => $token,
+            'token_type' => "Bearer",
+        ], 201);
     }
 
     /**
@@ -38,10 +54,7 @@ class AuthController extends Controller
     /**
      * Display the specified resource.
      */
-    public function me(Request $request)
-    {
-        
-    }
+    public function me(Request $request) {}
 
     /**
      * Show the form for editing the specified resource.
