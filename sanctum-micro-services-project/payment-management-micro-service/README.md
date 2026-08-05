@@ -1,58 +1,127 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+## Payment management service
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Microservice Laravel gérant les paiements (`payments`). Ne gère pas ses propres utilisateurs (authentification déléguée à `user-management-micro-service`) et peut interroger `order-management-micro-service` pour enrichir un paiement avec les détails de la commande associée.
 
-## About Laravel
+### Configuration
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Variables d'environnement spécifiques à ce service (`.env`) :
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| Variable                        | Défaut                     | Description                                                                 |
+| --------------------------------- | ----------------------------- | -------------------------------------------------------------------------- |
+| `AUTH_SERVICE_BASE_URL`           | `http://127.0.0.1:2000`       | URL de base de `user-management-micro-service` (introspection de token)     |
+| `AUTH_SERVICE_INTERNAL_API_KEY`   | `default_internal_api_key`    | Clé envoyée en `X-Internal-Api-Key` lors de l'appel d'introspection         |
+| `ORDER_SERVICE_BASE_URL`          | `http://127.0.0.1:8000`       | URL de base de `order-management-micro-service`                             |
+| `ORDER_SERVICE_INTERNAL_API_KEY`  | `default_internal_api_key`    | Réservée pour un futur appel authentifié par clé interne vers `order-management` (non utilisée actuellement, voir note sous `GET /payments/{id}/order`) |
+| `CACHE_STORE`                     | `database`                    | Utilisé pour cacher les tokens validés et les listes de paiements par utilisateur |
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+`AUTH_SERVICE_INTERNAL_API_KEY` doit être identique à `INTERNAL_API_KEY` configurée dans `user-management-micro-service`.
 
-## Learning Laravel
+### Authentification inter-services
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+Comme `order-management`, ce service délègue la validation des tokens Bearer à `user-management-micro-service` via le middleware `interservice.auth` (`App\Http\Middleware\AuthenticateMicroservice`) et `App\Services\AuthServiceClient`, qui appelle `POST {AUTH_SERVICE_BASE_URL}/api/auth/introspect`.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- Résultat mis en cache par token (`auth_service_token_<hash>`), 5 minutes par défaut.
+- Token invalide/expiré/absent → `401 Unauthorized`.
+- Utilisateur introspecté injecté dans `$request->attributes->get('user')`, consommé par `PaymentController`.
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+### Routes disponibles
 
-## Agentic Development
+Toutes les routes ci-dessous sont préfixées par `/api` (défini dans `bootstrap/app.php`).
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+#### Publique
 
-```bash
-composer require laravel/boost --dev
+| Méthode | URI | Description       |
+| ------- | --- | -------------------- |
+| GET     | `/` | Ping du service       |
 
-php artisan boost:install
+#### Protégées par `interservice.auth` (token Bearer validé via `user-management-service`)
+
+| Méthode | URI                            | Contrôleur                      | Description                                                    |
+| ------- | -------------------------------- | ---------------------------------- | ------------------------------------------------------------------ |
+| GET     | `/user`                          | closure                           | Retourne l'utilisateur introspecté (debug)                        |
+| GET     | `/payments`                      | `PaymentController@index`         | Liste les paiements de l'utilisateur courant                      |
+| POST    | `/payments/create`               | `PaymentController@store`         | Crée un paiement pour l'utilisateur courant                       |
+| GET     | `/payments/{id}`                 | `PaymentController@show`          | Détail d'un paiement par id (utilisateur courant seulement)       |
+| GET     | `/payments/{id}/order`           | `PaymentController@showOrder`     | Détail d'un paiement + détails de la commande associée            |
+| GET     | `/payments/number/{paymentNumber}` | `PaymentController@getByNumber` | Détail d'un paiement par `payment_number` (utilisateur courant seulement) |
+
+Header requis : `Authorization: Bearer <token>` (token émis par `user-management-micro-service`).
+
+`show()`, `showOrder()` et `getByNumber()` filtrent par `user_id` de l'utilisateur courant — un utilisateur ne peut pas consulter le paiement d'un autre.
+
+**`GET /payments`**
+
+Liste mise en cache 60s par utilisateur (clé `user_payments_<user_id>`), invalidée automatiquement à la création d'un paiement (`store`). Réponse :
+```json
+{
+  "message": "Payments retrieved successfully",
+  "data_count": 1,
+  "data": [
+    {
+      "id": 1,
+      "user_id": 1,
+      "order_id": 1,
+      "payment_number": "PAY-...",
+      "amount": "99.90",
+      "currency": "CAD",
+      "payment_method": "PayPal",
+      "status": "Pending",
+      "created_at": "2026-08-05T07:51:39+00:00",
+      "updated_at": "2026-08-05T07:51:39+00:00"
+    }
+  ]
+}
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+**`POST /payments/create`** — body attendu (`user_id` est déduit automatiquement de l'utilisateur authentifié) :
+```json
+{
+  "order_id": "integer",
+  "amount": "numeric",
+  "currency": "string (3 caractères)",
+  "payment_method": "credit_card | debit_card | paypal"
+}
+```
+Réponse `201` : `{ message, data: <Payment> }`. `status` n'est pas fourni par le client : il prend la valeur par défaut de la colonne SQL (`pending`).
 
-## Contributing
+**`GET /payments/{id}`** — Réponse `200` : `{ message, data: <Payment> }`. `404` si le paiement n'existe pas ou n'appartient pas à l'utilisateur courant.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+**`GET /payments/number/{paymentNumber}`** — Réponse `200` : `{ message, data: <Payment> }`. `404` (`Payment not found: <paymentNumber>`) si le paiement n'existe pas ou n'appartient pas à l'utilisateur courant.
 
-## Code of Conduct
+**`GET /payments/{id}/order`**
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Récupère le paiement puis appelle `GET {ORDER_SERVICE_BASE_URL}/api/orders/{order_id}` sur `order-management-micro-service`, en repassant le **même token Bearer** que celui reçu par ce service (pas de clé interne dédiée). Ça fonctionne parce que `order-management` filtre aussi ses commandes par `user_id` : le token doit donc appartenir au même utilisateur propriétaire à la fois du paiement et de la commande.
 
-## Security Vulnerabilities
+Réponse `200` :
+```json
+{
+  "message": "Order details retrieved successfully",
+  "payment": {
+    "id": 1,
+    "payment_number": "PAY-...",
+    "order_id": 1,
+    "user_id": 1,
+    "amount": "99.90",
+    "currency": "CAD",
+    "payment_method": "paypal",
+    "status": "pending",
+    "created_at": "...",
+    "updated_at": "...",
+    "order_details": { "message": "Order retrieved successfully", "data": { } }
+  }
+}
+```
+`404` si le paiement n'existe pas ou n'appartient pas à l'utilisateur courant. Si l'appel vers `order-management` échoue (commande introuvable, service indisponible, etc.), la réponse propage le même code HTTP et le corps brut de l'erreur (`{ message, error }`).
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+> `ORDER_SERVICE_INTERNAL_API_KEY` est déclarée en config mais n'est pas encore utilisée par `showOrder()` — l'appel ne passe que le token Bearer de l'utilisateur, pas de header `X-Internal-Api-Key`. À utiliser si `order-management` exige un jour cette clé pour les appels service-à-service purs (sans utilisateur).
 
-## License
+### Enums
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+- **`App\Enums\PaymentMethod`** (backed `string`) : `CREDIT_CARD = 'credit_card'`, `DEBIT_CARD = 'debit_card'`, `PAYPAL = 'paypal'` — aligné sur la colonne SQL `payments.payment_method`, identique à `order-management`.
+- **`App\Enums\PaymentStatus`** (backed `string`) : `PENDING = 'pending'`, `COMPLETED = 'completed'`, `FAILED = 'failed'`, `REFUNDED = 'refunded'` — aligné sur la colonne SQL `payments.status`.
+
+### Autres routes (framework, non applicatives)
+
+| Méthode  | URI  | Description                               |
+| -------- | ---- | -------------------------------------------- |
+| GET/HEAD | `up` | Health check (utilisé par les orchestrateurs) |
