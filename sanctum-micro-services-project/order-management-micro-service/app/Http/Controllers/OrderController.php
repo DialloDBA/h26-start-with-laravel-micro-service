@@ -68,9 +68,10 @@ class OrderController extends Controller
         ], 201);
     }
 
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
-        $order = Order::find($id);
+        $user = collect($request->attributes->get('user'));
+        $order = Order::where('user_id', $user->get('id'))->find($id);
 
         if (!$order) {
             return response()->json([
@@ -83,9 +84,11 @@ class OrderController extends Controller
             'data' => $order,
         ]);
     }
-    public function getByNumber(string $orderNumber)
+    public function getByNumber(Request $request, string $orderNumber)
     {
-        $order = Order::where('order_number', $orderNumber)->first();
+
+        $user = collect($request->attributes->get('user'));
+        $order = Order::where('user_id', $user->get('id'))->where('order_number', $orderNumber)->first();
 
         if (!$order) {
             return response()->json([

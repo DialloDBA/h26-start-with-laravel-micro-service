@@ -28,27 +28,23 @@ Toutes les routes ci-dessous sont préfixées par `/api` (défini dans `bootstra
 
 #### Publiques
 
-| Méthode | URI | Description                          |
-| ------- | --- | -------------------------------------- |
-| GET     | `/` | Ping du service (middleware `web`)     |
-
-#### Protégée par `auth:sanctum`
-
-| Méthode | URI     | Description                                |
-| ------- | ------- | --------------------------------------------- |
-| GET     | `/user` | Retourne l'utilisateur Sanctum local (debug)  |
-
-> Cette route utilise le guard Sanctum local du service, distinct du flux d'authentification inter-services ci-dessus. Ce service n'ayant pas ses propres utilisateurs/tokens Sanctum en pratique, elle sert surtout de route de diagnostic.
+| Méthode | URI | Description                |
+| ------- | --- | ----------------------------- |
+| GET     | `/` | Ping du service                |
 
 #### Protégées par `interservice.auth` (token Bearer validé via `user-management-service`)
 
-| Méthode | URI             | Contrôleur              | Description                                |
-| ------- | --------------- | ------------------------ | --------------------------------------------- |
-| GET     | `/orders`       | `OrderController@index`  | Liste les commandes de l'utilisateur courant  |
-| POST    | `/orders/create` | `OrderController@store` | Crée une commande pour l'utilisateur courant  |
-| GET     | `/orders/{id}`  | `OrderController@show`  | Détail d'une commande par id                  |
+| Méthode | URI                        | Contrôleur                    | Description                                     |
+| ------- | --------------------------- | ------------------------------- | -------------------------------------------------- |
+| GET     | `/user`                     | closure                        | Retourne l'utilisateur introspecté (debug)         |
+| GET     | `/orders`                   | `OrderController@index`        | Liste les commandes de l'utilisateur courant       |
+| POST    | `/orders/create`            | `OrderController@store`        | Crée une commande pour l'utilisateur courant       |
+| GET     | `/orders/{id}`              | `OrderController@show`         | Détail d'une commande par id (utilisateur courant seulement) |
+| GET     | `/orders/number/{orderNumber}` | `OrderController@getByNumber` | Détail d'une commande par `order_number` (utilisateur courant seulement) |
 
 Header requis : `Authorization: Bearer <token>` (token émis par `user-management-micro-service`).
+
+`show()` et `getByNumber()` filtrent toujours par `user_id` de l'utilisateur courant (`Order::where('user_id', $user->get('id'))->...`) — un utilisateur ne peut pas consulter la commande d'un autre en devinant son id ou son numéro.
 
 **`GET /orders`**
 
@@ -89,9 +85,9 @@ Liste mise en cache 60s par utilisateur (clé `user_orders_<user_id>`), invalid�
 ```
 Réponse `201` : `{ message, data: <Order> }`. `grand_total` est calculé côté serveur (`total + tax + shipping - discount`), toute valeur envoyée est ignorée.
 
-**`GET /orders/{id}`** — Réponse `200` : `{ message, data: <Order> }`. `404` si la commande n'existe pas.
+**`GET /orders/{id}`** — Réponse `200` : `{ message, data: <Order> }`. `404` si la commande n'existe pas ou n'appartient pas à l'utilisateur courant.
 
-> ⚠️ `show()` ne filtre pas par utilisateur courant : n'importe quel appelant authentifié peut consulter n'importe quelle commande par id (IDOR potentiel).
+**`GET /orders/number/{orderNumber}`** — Réponse `200` : `{ message, data: <Order> }`. `404` (`Order not found: <orderNumber>`) si la commande n'existe pas ou n'appartient pas à l'utilisateur courant.
 
 ### Enums
 
