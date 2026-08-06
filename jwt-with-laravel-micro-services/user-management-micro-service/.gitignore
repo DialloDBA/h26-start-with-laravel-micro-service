@@ -20,6 +20,7 @@
 /public/storage
 /storage/*.key
 /storage/*.pem
+/storage/keys/*.pem
 /storage/pail
 /vendor
 _ide_helper.php
